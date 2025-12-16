@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Users, Skull, RefreshCw, Trophy, Zap, Flame, ShieldAlert, AlertTriangle } from 'lucide-react';
+import { Play, Users, Skull, RefreshCw, Trophy, Zap, Flame, ShieldAlert, AlertTriangle, BookOpen, ArrowLeft } from 'lucide-react';
 
 // --- CONFIGURACIÓN Y UTILIDADES ---
 
@@ -21,7 +21,6 @@ const TYPES = {
 };
 
 // Generador de ID Único Robustecido
-// Usamos un contador global y timestamp para evitar colisiones de Math.random()
 let globalIdCounter = 0;
 const getUniqueId = () => {
   globalIdCounter++;
@@ -33,35 +32,28 @@ const generateDeck = (mode) => {
   let deck = [];
   const isImpossible = mode === 'IMPOSSIBLE';
 
-  // Cartas numéricas y de acción básicas
   COLORS.forEach(color => {
-    // 0 una vez
     deck.push({ id: getUniqueId(), color, value: 0, type: TYPES.NUMBER, points: 0 });
-    // 1-9 dos veces
     for (let i = 1; i <= 9; i++) {
       deck.push({ id: getUniqueId(), color, value: i, type: TYPES.NUMBER, points: i });
       deck.push({ id: getUniqueId(), color, value: i, type: TYPES.NUMBER, points: i });
     }
-    // Acciones (2 de cada una)
     for (let i = 0; i < 2; i++) {
       deck.push({ id: getUniqueId(), color, value: '🚫', type: TYPES.SKIP, points: 20 });
       deck.push({ id: getUniqueId(), color, value: '⇄', type: TYPES.REVERSE, points: 20 });
       
       if (isImpossible) {
-        deck.push({ id: getUniqueId(), color, value: '+6', type: TYPES.DRAW6, points: 50 }); // Reemplaza +2
+        deck.push({ id: getUniqueId(), color, value: '+6', type: TYPES.DRAW6, points: 50 });
       } else {
         deck.push({ id: getUniqueId(), color, value: '+2', type: TYPES.DRAW2, points: 20 });
       }
     }
   });
 
-  // Comodines (4 de cada uno)
   for (let i = 0; i < 4; i++) {
     deck.push({ id: getUniqueId(), color: SPECIAL_COLOR, value: '🌈', type: TYPES.WILD, points: 50 });
-    
     if (isImpossible) {
-      deck.push({ id: getUniqueId(), color: SPECIAL_COLOR, value: '+10', type: TYPES.WILD10, points: 100 }); // Reemplaza +4
-      // Carta especial -4 (Exclusiva Imposible: Elimina 4 cartas de tu mano)
+      deck.push({ id: getUniqueId(), color: SPECIAL_COLOR, value: '+10', type: TYPES.WILD10, points: 100 });
       deck.push({ id: getUniqueId(), color: SPECIAL_COLOR, value: '-4', type: TYPES.MINUS4, points: 50 });
     } else {
       deck.push({ id: getUniqueId(), color: SPECIAL_COLOR, value: '+4', type: TYPES.WILD4, points: 50 });
@@ -113,7 +105,6 @@ const Card = ({ card, onClick, isPlayable, hidden, small = false }) => {
         ${card.type === TYPES.MINUS4 ? 'animate-bounce border-red-500' : ''}
       `}
     >
-      {/* Círculo central */}
       <div className={`
         absolute w-[85%] h-[60%] bg-white rounded-[50%] rotate-[-45deg] 
         flex items-center justify-center shadow-inner
@@ -131,8 +122,6 @@ const Card = ({ card, onClick, isPlayable, hidden, small = false }) => {
            card.value}
         </span>
       </div>
-      
-      {/* Iconos pequeños en esquinas */}
       <span className="absolute top-2 left-2 text-white font-bold text-sm md:text-lg">{card.value}</span>
       <span className="absolute bottom-2 right-2 text-white font-bold text-sm md:text-lg rotate-180">{card.value}</span>
     </div>
@@ -142,29 +131,59 @@ const Card = ({ card, onClick, isPlayable, hidden, small = false }) => {
 // --- LOGICA PRINCIPAL (APP) ---
 
 export default function App() {
-  // Estados del juego
-  const [mode, setMode] = useState(null); // '2P', '3P', 'IMPOSSIBLE'
-  const [gameState, setGameState] = useState('MENU'); // 'MENU', 'PLAYING', 'GAME_OVER'
+  const [mode, setMode] = useState(null); 
+  const [gameState, setGameState] = useState('MENU'); // 'MENU', 'PLAYING', 'GAME_OVER', 'HOW_TO_PLAY'
   const [deck, setDeck] = useState([]);
   const [discardPile, setDiscardPile] = useState([]);
-  const [players, setPlayers] = useState([]); // [{id, name, hand, isBot}]
+  const [players, setPlayers] = useState([]); 
   const [turnIndex, setTurnIndex] = useState(0);
-  const [turnCount, setTurnCount] = useState(0); // Contador global de turnos para forzar updates
-  const [direction, setDirection] = useState(1); // 1 horario, -1 antihorario
+  const [turnCount, setTurnCount] = useState(0); 
+  const [direction, setDirection] = useState(1); 
   const [currentColor, setCurrentColor] = useState('');
   const [winner, setWinner] = useState(null);
-  const [unoCalled, setUnoCalled] = useState(false); // Para el jugador humano
+  const [unoCalled, setUnoCalled] = useState(false); 
   const [showColorPicker, setShowColorPicker] = useState(false);
-  const [pendingCard, setPendingCard] = useState(null); // Carta wild que espera selección de color
+  const [pendingCard, setPendingCard] = useState(null); 
   const [message, setMessage] = useState("¡Bienvenido!");
   const [animationClass, setAnimationClass] = useState("");
 
-  // Inicializar Juego
+  const playAreaRef = useRef(null);
+
+  // Función pura para ejecutar robos (sin side effects directos, devuelve nuevo estado)
+  const performDraw = (currentDeck, currentDiscard, currentPlayers, playerIdx, count) => {
+    let newDeck = [...currentDeck];
+    let newDiscard = [...currentDiscard];
+    let newPlayers = currentPlayers.map(p => ({...p, hand: [...p.hand]}));
+    
+    let drawn = [];
+    
+    for(let i=0; i<count; i++) {
+        if (newDeck.length === 0) {
+            if (newDiscard.length > 1) {
+                const topCard = newDiscard.pop();
+                newDeck = newDiscard.sort(() => Math.random() - 0.5);
+                newDiscard = [topCard];
+            } else {
+                break; // No hay más cartas
+            }
+        }
+        if(newDeck.length > 0) {
+            drawn.push(newDeck.shift());
+        }
+    }
+
+    newPlayers[playerIdx].hand.push(...drawn);
+    
+    return {
+        newDeck,
+        newDiscard,
+        newPlayers,
+        drawn
+    };
+  };
+
   const startGame = (selectedMode) => {
     const newDeck = generateDeck(selectedMode);
-    
-    // Crear jugadores
-    // Usamos JSON.parse/stringify para asegurar copias profundas iniciales y evitar referencias cruzadas
     const p1 = { id: 0, name: 'Tú', hand: [], isBot: false };
     const p2 = { id: 1, name: selectedMode === 'IMPOSSIBLE' ? 'Terminator' : 'Bot 1', hand: [], isBot: true };
     let newPlayers = [p1, p2];
@@ -173,12 +192,10 @@ export default function App() {
       newPlayers.push({ id: 2, name: selectedMode === 'IMPOSSIBLE' ? 'Destroyer' : 'Bot 2', hand: [], isBot: true });
     }
 
-    // Repartir 7 cartas
     newPlayers.forEach(p => {
       p.hand = newDeck.splice(0, 7);
     });
 
-    // Carta inicial (no puede ser comodín +4/+10 o -4 al inicio para simplificar)
     let initialCard = newDeck.shift();
     while ([TYPES.WILD4, TYPES.WILD10, TYPES.MINUS4].includes(initialCard.type)) {
       newDeck.push(initialCard);
@@ -187,7 +204,7 @@ export default function App() {
 
     setDeck(newDeck);
     setDiscardPile([initialCard]);
-    setCurrentColor(initialCard.color === 'black' ? 'red' : initialCard.color); // Si sale wild normal, rojo por defecto
+    setCurrentColor(initialCard.color === 'black' ? 'red' : initialCard.color); 
     setPlayers(newPlayers);
     setTurnIndex(0);
     setTurnCount(0);
@@ -199,108 +216,67 @@ export default function App() {
     setGameState('PLAYING');
   };
 
-  // Efecto: Turno de la IA
-  // Depende de turnCount para asegurar que el bot juegue incluso si el índice de turno no cambia (ej: +2 en 1v1)
+  // Turno de la IA
   useEffect(() => {
     if (gameState === 'PLAYING' && players[turnIndex]?.isBot && !winner && !showColorPicker) {
       const timer = setTimeout(() => {
         botPlay();
-      }, mode === 'IMPOSSIBLE' ? 1000 : 1500); // En modo imposible son más rápidos
+      }, mode === 'IMPOSSIBLE' ? 1000 : 1500); 
       return () => clearTimeout(timer);
     }
   }, [turnCount, gameState, winner, showColorPicker, players, turnIndex, discardPile]);
 
-  // Funciones Auxiliares
+  // Wrapper para robos simples (Botón Robar / Penalizaciones simples)
+  const drawCards = (playerIdx, count) => {
+    const { newDeck, newDiscard, newPlayers } = performDraw(deck, discardPile, players, playerIdx, count);
+    setDeck(newDeck);
+    setDiscardPile(newDiscard);
+    setPlayers(newPlayers);
+    return newPlayers[playerIdx].hand.slice(-count); 
+  };
+
   const getNextPlayerIndex = (skip = false) => {
     let next = turnIndex + (direction * (skip ? 2 : 1));
     if (next >= players.length) next %= players.length;
     if (next < 0) next += players.length;
-    // Manejo extra para modulo negativo en JS
     return (next + players.length) % players.length;
   };
 
-  const drawCards = (playerIdx, count) => {
-    const player = players[playerIdx];
-    let drawPile = [...deck];
-    let discarded = [...discardPile];
-    
-    // Si no hay cartas, barajar descarte
-    if (drawPile.length < count) {
-      // Guardar la carta superior para que se quede en descarte
-      const topCard = discarded.pop();
-      // El resto se baraja
-      const newDeck = discarded.sort(() => Math.random() - 0.5);
-      drawPile = [...drawPile, ...newDeck];
-      // Restaurar pila de descarte solo con la topCard
-      discarded = [topCard];
-      setDiscardPile(discarded);
-    }
-
-    const drawn = [];
-    for(let i=0; i<count; i++) {
-      if(drawPile.length > 0) drawn.push(drawPile.shift());
-    }
-
-    setDeck(drawPile);
-    
-    // Actualizar mano del jugador de forma inmutable
-    setPlayers(prevPlayers => {
-        const newPlayers = [...prevPlayers];
-        newPlayers[playerIdx] = {
-            ...newPlayers[playerIdx],
-            hand: [...newPlayers[playerIdx].hand, ...drawn]
-        };
-        return newPlayers;
-    });
-    
-    return drawn;
-  };
-
-  // Lógica del Bot
   const botPlay = () => {
     const bot = players[turnIndex];
     const topCard = discardPile[discardPile.length - 1];
     
-    // 1. Filtrar jugables
     const playable = bot.hand.filter(c => 
       c.color === currentColor || 
       c.color === 'black' || 
-      (c.value === topCard.value && c.color !== 'black') // Match number/symbol
+      (c.value === topCard.value && c.color !== 'black') 
     );
 
-    // Lógica Imposible vs Normal
     let chosenCard = null;
     let chosenColor = 'red';
 
     if (mode === 'IMPOSSIBLE') {
-      // Priorizar ataques fuertes: +10, +6, Skip
       const attacks = playable.filter(c => [TYPES.WILD10, TYPES.DRAW6, TYPES.SKIP, TYPES.MINUS4].includes(c.type));
       if (attacks.length > 0) {
         chosenCard = attacks[0];
       } else if (playable.length > 0) {
-        // Jugar la que tenga más copias del mismo color para vaciar mano
         chosenCard = playable[0]; 
       }
       
-      // Elegir color inteligentemente (el que más tenga el bot)
       const counts = { red:0, blue:0, green:0, yellow:0 };
       bot.hand.forEach(c => { if(c.color !== 'black') counts[c.color]++; });
       chosenColor = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b);
 
     } else {
-      // Lógica normal
       chosenCard = playable.length > 0 ? playable[0] : null;
       chosenColor = ['red', 'blue', 'green', 'yellow'][Math.floor(Math.random() * 4)];
     }
 
-    // Manejo de UNO para bots
     if (bot.hand.length === 2 && chosenCard) {
-      // Probabilidad de olvidar decir UNO en normal (10%), Imposible nunca olvida
       const forgets = mode !== 'IMPOSSIBLE' && Math.random() < 0.1;
       if (!forgets) {
         setMessage(`${bot.name} grita: ¡UNO!`);
       } else {
-        // Si olvida, penalidad inmediata (simulada)
         setTimeout(() => {
             setMessage(`${bot.name} olvidó decir UNO. +3 Cartas.`);
             drawCards(turnIndex, 3);
@@ -311,26 +287,22 @@ export default function App() {
     if (chosenCard) {
       handleMove(bot.id, chosenCard, chosenColor);
     } else {
-      // Robar
       setMessage(`${bot.name} roba una carta.`);
       const drawn = drawCards(turnIndex, 1);
       
-      // Intentar jugar la robada si es posible (Regla house rule común)
       const card = drawn[0];
       if (card && (card.color === currentColor || card.color === 'black' || card.value === topCard.value)) {
-        setTimeout(() => handleMove(bot.id, card, chosenColor), 1000); // Pausa dramática
+        setTimeout(() => handleMove(bot.id, card, chosenColor), 1000); 
       } else {
         setTurnIndex(getNextPlayerIndex());
-        setTurnCount(c => c + 1); // Importante: Actualizar contador
+        setTurnCount(c => c + 1); 
       }
     }
   };
 
-  // Movimiento Humano
   const handleHumanPlay = (card) => {
     if (gameState !== 'PLAYING' || players[turnIndex].isBot) return;
 
-    // Validación
     const topCard = discardPile[discardPile.length - 1];
     const isMatch = card.color === currentColor || card.color === 'black' || card.value === topCard.value;
 
@@ -339,13 +311,6 @@ export default function App() {
       setAnimationClass("animate-shake");
       setTimeout(() => setAnimationClass(""), 500);
       return;
-    }
-
-    // Verificar UNO
-    if (players[0].hand.length === 2 && !unoCalled) {
-        setMessage("¡No dijiste UNO! Penalización +3 cartas.");
-        drawCards(0, 3);
-        // Sigue jugando la carta, pero con penalidad aplicada antes
     }
 
     if (card.color === 'black') {
@@ -365,10 +330,8 @@ export default function App() {
   const handleHumanDraw = () => {
     if (players[turnIndex].isBot) return;
     drawCards(0, 1);
-    setUnoCalled(false); // Resetear estado UNO al robar
+    setUnoCalled(false); 
     
-    // Si la carta robada es jugable, el usuario puede jugarla haciendo click. 
-    // UX simplificada: Pasa turno automáticamente tras breve pausa
     setMessage("Robaste carta. Turno siguiente.");
     setTimeout(() => {
         setTurnIndex(getNextPlayerIndex());
@@ -376,61 +339,74 @@ export default function App() {
     }, 800);
   };
 
-  // Lógica Central de Movimiento (Aplica efectos)
+  // --- LÓGICA CENTRAL DE MOVIMIENTO ---
   const handleMove = (playerId, card, chosenWildColor = null) => {
-    // Clona los jugadores de forma segura para evitar mutaciones directas
-    let nextPlayers = players.map(p => ({...p, hand: [...p.hand]}));
-    let currentPlayer = nextPlayers[playerId];
+    let tempDeck = [...deck];
+    let tempDiscard = [...discardPile];
+    let tempPlayers = players.map(p => ({...p, hand: [...p.hand]}));
+    let currentPlayer = tempPlayers[playerId];
+
+    // VERIFICACIÓN DE PENALIZACIÓN POR NO DECIR UNO
+    if (playerId === 0 && currentPlayer.hand.length === 2 && !unoCalled) {
+        setMessage("¡No dijiste UNO! Penalización +3 cartas.");
+        const resPenalty = performDraw(tempDeck, tempDiscard, tempPlayers, playerId, 3);
+        tempDeck = resPenalty.newDeck;
+        tempDiscard = resPenalty.newDiscard;
+        tempPlayers = resPenalty.newPlayers;
+        currentPlayer = tempPlayers[playerId];
+    }
     
-    // Quitar carta de mano
     const cardIndex = currentPlayer.hand.findIndex(c => c.id === card.id);
     if (cardIndex !== -1) {
         currentPlayer.hand.splice(cardIndex, 1);
     }
     
-    // Efecto especial: -4 (Modo Imposible)
     if (card.type === TYPES.MINUS4) {
-      // Elimina 4 cartas al azar (que no sean especiales importantes para no romper lógica, o cualquiera)
-      // Regla: Elimina 4 cartas numéricas o de acción simple al azar.
       const safeToRemove = currentPlayer.hand.filter(c => c.type !== TYPES.MINUS4 && c.type !== TYPES.WILD10);
       for(let i=0; i<4 && safeToRemove.length > 0; i++) {
         const idx = Math.floor(Math.random() * safeToRemove.length);
         const removed = safeToRemove.splice(idx, 1)[0];
-        // Encontrar en mano real y borrar
         const handIdx = currentPlayer.hand.findIndex(h => h.id === removed.id);
         if(handIdx > -1) currentPlayer.hand.splice(handIdx, 1);
       }
       setMessage(`${currentPlayer.name} usó PURGA -4. ¡Su mano se reduce!`);
     }
 
-    setPlayers(nextPlayers);
-    setDiscardPile(prev => [...prev, card]);
+    tempDiscard.push(card);
 
-    // Verificar Victoria
     if (currentPlayer.hand.length === 0) {
       setWinner(playerId);
       setGameState('GAME_OVER');
+      setDeck(tempDeck);
+      setDiscardPile(tempDiscard);
+      setPlayers(tempPlayers);
       return;
     }
 
-    // Aplicar lógica de carta
-    let nextIndex = turnIndex; // Temporal
+    let nextIndex = turnIndex;
     let skip = false;
 
-    // Actualizar color (CORREGIDO: Solo actualiza si es Comodín)
     if (card.color === 'black') {
        if (chosenWildColor) {
          setCurrentColor(chosenWildColor);
        } else {
-         // Fallback por si acaso
          setCurrentColor('red'); 
        }
     } else {
-       // Si es carta normal, el color es el de la carta
        setCurrentColor(card.color);
     }
 
-    // Efectos
+    let currentDir = direction;
+    if (card.type === TYPES.REVERSE && players.length > 2) currentDir *= -1;
+    
+    const getVictimIndex = (skipping) => {
+        let steps = skipping ? 1 : 1; 
+        let next = playerId + (currentDir * steps);
+        if (next >= tempPlayers.length) next %= tempPlayers.length;
+        if (next < 0) next += tempPlayers.length;
+        return (next + tempPlayers.length) % tempPlayers.length;
+    };
+
     switch (card.type) {
       case TYPES.SKIP:
         skip = true;
@@ -438,60 +414,146 @@ export default function App() {
         break;
       case TYPES.REVERSE:
         if (players.length === 2) {
-          skip = true; // En 2P, reverso actúa como salto
+          skip = true; 
         } else {
           setDirection(d => d * -1);
         }
         setMessage("¡Cambio de sentido!");
         break;
       case TYPES.DRAW2:
-        nextIndex = getNextPlayerIndex(); // Jugador víctima
-        drawCards(nextIndex, 2);
-        skip = true; // Pierde turno tras robar
-        setMessage(`${players[nextIndex].name} come +2 y pierde turno.`);
+        nextIndex = getVictimIndex(false);
+        const resDraw2 = performDraw(tempDeck, tempDiscard, tempPlayers, nextIndex, 2);
+        tempDeck = resDraw2.newDeck;
+        tempDiscard = resDraw2.newDiscard;
+        tempPlayers = resDraw2.newPlayers;
+        skip = true; 
+        setMessage(`${tempPlayers[nextIndex].name} come +2 y pierde turno.`);
         break;
-      case TYPES.DRAW6: // IMPOSSIBLE
-        nextIndex = getNextPlayerIndex();
-        drawCards(nextIndex, 6);
+      case TYPES.DRAW6: 
+        nextIndex = getVictimIndex(false);
+        const resDraw6 = performDraw(tempDeck, tempDiscard, tempPlayers, nextIndex, 6);
+        tempDeck = resDraw6.newDeck;
+        tempDiscard = resDraw6.newDiscard;
+        tempPlayers = resDraw6.newPlayers;
         skip = true;
-        setMessage(`¡${players[nextIndex].name} SUFRE +6 y pierde turno!`);
+        setMessage(`¡${tempPlayers[nextIndex].name} SUFRE +6 y pierde turno!`);
         break;
       case TYPES.WILD4:
-        nextIndex = getNextPlayerIndex();
-        drawCards(nextIndex, 4);
+        nextIndex = getVictimIndex(false);
+        const resDraw4 = performDraw(tempDeck, tempDiscard, tempPlayers, nextIndex, 4);
+        tempDeck = resDraw4.newDeck;
+        tempDiscard = resDraw4.newDiscard;
+        tempPlayers = resDraw4.newPlayers;
         skip = true;
-        setMessage(`${players[nextIndex].name} come +4 y pierde turno.`);
+        setMessage(`${tempPlayers[nextIndex].name} come +4 y pierde turno.`);
         break;
-      case TYPES.WILD10: // IMPOSSIBLE
-        nextIndex = getNextPlayerIndex();
-        drawCards(nextIndex, 10);
+      case TYPES.WILD10: 
+        nextIndex = getVictimIndex(false);
+        const resDraw10 = performDraw(tempDeck, tempDiscard, tempPlayers, nextIndex, 10);
+        tempDeck = resDraw10.newDeck;
+        tempDiscard = resDraw10.newDiscard;
+        tempPlayers = resDraw10.newPlayers;
         skip = true;
-        setMessage(`💀 ¡${players[nextIndex].name} DESTRUIDO CON +10! 💀`);
+        setMessage(`💀 ¡${tempPlayers[nextIndex].name} DESTRUIDO CON +10! 💀`);
         break;
       case TYPES.MINUS4:
-         // No afecta al siguiente jugador, solo al que la tiró
          break;
       default:
         break;
     }
 
-    // Calcular siguiente turno real
-    // Nota: getNextPlayerIndex depende del estado actual de turnIndex y direction,
-    // pero si hubo REVERSE, direction cambió. Debemos recalcular con cuidado.
-    
-    let currentDir = direction;
-    if (card.type === TYPES.REVERSE && players.length > 2) currentDir *= -1;
-    
     let steps = skip ? 2 : 1;
     let nextPlayerId = (playerId + (currentDir * steps)) % players.length;
     if (nextPlayerId < 0) nextPlayerId += players.length;
 
+    setDeck(tempDeck);
+    setDiscardPile(tempDiscard);
+    setPlayers(tempPlayers);
     setTurnIndex(nextPlayerId);
-    setTurnCount(c => c + 1); // Forzar actualización de efecto
-    setUnoCalled(false); // Resetear flag UNO
+    setTurnCount(c => c + 1);
+    setUnoCalled(false);
   };
 
-  // --- RENDERIZADO ---
+  // --- VISTAS ---
+
+  if (gameState === 'HOW_TO_PLAY') {
+      return (
+          <div className="min-h-screen bg-slate-900 flex flex-col items-center p-4 md:p-8 text-white overflow-auto relative">
+               <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-blue-900 via-purple-900 to-black opacity-80 z-0 fixed"></div>
+               <div className="z-10 w-full max-w-3xl">
+                   <button 
+                    onClick={() => setGameState('MENU')}
+                    className="flex items-center gap-2 mb-6 text-gray-300 hover:text-white transition-colors"
+                   >
+                       <ArrowLeft /> Volver al Menú
+                   </button>
+
+                   <h1 className="text-4xl md:text-5xl font-black mb-8 text-center text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-pink-500">
+                       ¿Cómo jugar?
+                   </h1>
+
+                   <div className="space-y-8 bg-black/40 p-6 md:p-8 rounded-2xl border border-white/10 backdrop-blur-md">
+                       
+                       <section>
+                           <h2 className="text-2xl font-bold text-yellow-400 mb-4 border-b border-yellow-400/30 pb-2">Mecánicas básicas</h2>
+                           <ul className="space-y-3 text-gray-200">
+                               <li>• Juega cartas que <strong>coincidan en color, número o símbolo</strong> con la carta superior del montón de descarte. Si no puedes jugar, <strong>roba del montón de robo</strong> hasta encontrar una que puedas usar.</li>
+                               <li>• <strong>Objetivo:</strong> Sé el primero en descartar todas tus cartas.</li>
+                               <li>• <strong>Turnos:</strong> Se juegan en orden (horario o anti-horario).</li>
+                               <li>• <strong>¡UNO!:</strong> Cuando te quedan 2 cartas, presiona el botón UNO o recibirás penalidad (+3 cartas).</li>
+                           </ul>
+                       </section>
+
+                       <section>
+                           <h3 className="text-xl font-bold text-blue-400 mb-3">Cartas especiales:</h3>
+                           <ul className="grid gap-3 text-sm md:text-base">
+                               <li className="flex items-start gap-2"><span className="text-xl">⏭️</span> <span><strong>Saltar:</strong> Salta el turno del siguiente jugador.</span></li>
+                               <li className="flex items-start gap-2"><span className="text-xl">↺</span> <span><strong>Reverso:</strong> Invierte el orden de los turnos.</span></li>
+                               <li className="flex items-start gap-2"><span className="font-bold text-green-400">+2</span> <span>El siguiente jugador roba <strong>2 cartas</strong> y pierde su turno.</span></li>
+                               <li className="flex items-start gap-2"><span className="text-xl">🃏</span> <span><strong>Comodín:</strong> Elige <strong>nuevo color</strong> para continuar.</span></li>
+                               <li className="flex items-start gap-2"><span className="font-bold text-yellow-400">+4</span> <span>El siguiente roba <strong>4 cartas</strong>, pierde turno y tú eliges color.</span></li>
+                           </ul>
+                       </section>
+
+                       <section>
+                           <h2 className="text-2xl font-bold text-pink-500 mb-4 border-b border-pink-500/30 pb-2">Modos de juego</h2>
+                           <div className="space-y-4">
+                               <div>
+                                   <h4 className="font-bold flex items-center gap-2"><Users size={18}/> Modo 2 jugadores</h4>
+                                   <p className="text-gray-400 ml-6">Tú vs 1 IA. Reglas clásicas del UNO.</p>
+                               </div>
+                               <div>
+                                   <h4 className="font-bold flex items-center gap-2"><Users size={18}/> Modo 3 jugadores</h4>
+                                   <p className="text-gray-400 ml-6">Tú vs 2 IAs. Reglas clásicas del UNO.</p>
+                               </div>
+                               <div className="bg-red-900/30 p-4 rounded-xl border border-red-500/30">
+                                   <h4 className="font-bold flex items-center gap-2 text-red-400"><Skull size={18}/> Modo Imposible (3 jugadores)</h4>
+                                   <p className="text-gray-300 mb-2">Tú vs 2 IAs ultra-inteligentes. <strong>Reglas modificadas EXTREMAS:</strong></p>
+                                   <ul className="space-y-2 text-sm ml-4">
+                                       <li className="text-red-200"><strong>+10</strong> (reemplaza +4): Siguiente roba 10 cartas y pierde turno.</li>
+                                       <li className="text-orange-200"><strong>+6</strong> (reemplaza +2): Siguiente roba 6 cartas y pierde turno.</li>
+                                       <li className="text-purple-200"><strong>-4</strong> (nueva): Elimina 4 cartas al azar DE TU PROPIA MANO.</li>
+                                   </ul>
+                                   <p className="mt-2 text-xs italic text-red-400">¡Supervivencia pura! Las IAs juegan perfectamente y sin piedad.</p>
+                               </div>
+                           </div>
+                       </section>
+
+                       <section>
+                           <h2 className="text-2xl font-bold text-green-400 mb-4 border-b border-green-400/30 pb-2">Controles rápidos</h2>
+                           <ul className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-300">
+                               <li className="flex items-center gap-2 bg-white/5 p-2 rounded">🖱️ Haz clic en las cartas para jugar</li>
+                               <li className="flex items-center gap-2 bg-white/5 p-2 rounded">📦 Botón "Robar" si no puedes jugar</li>
+                               <li className="flex items-center gap-2 bg-white/5 p-2 rounded">🚨 Botón "UNO" con 1 carta restante</li>
+                               <li className="flex items-center gap-2 bg-white/5 p-2 rounded">🎨 Elige color cuando juegues comodines</li>
+                               <li className="flex items-center gap-2 bg-white/5 p-2 rounded">🚪 Botón "Salir" para cambiar modo</li>
+                           </ul>
+                       </section>
+                   </div>
+               </div>
+          </div>
+      )
+  }
 
   if (gameState === 'MENU') {
     return (
@@ -518,6 +580,10 @@ export default function App() {
               <div className="flex items-center justify-center gap-2 text-red-100"><Flame /> MODO IMPOSIBLE <Skull /></div>
               <p className="text-xs text-red-300 mt-1 font-normal">+10 Cards, +6 Draws, IA Agresiva</p>
             </button>
+            
+            <button onClick={() => setGameState('HOW_TO_PLAY')} className="mt-4 px-6 py-2 bg-slate-700/50 hover:bg-slate-600 rounded-xl text-sm font-semibold transition-colors flex items-center justify-center gap-2 mx-auto">
+                <BookOpen size={16}/> ¿Cómo jugar?
+            </button>
           </div>
         </div>
       </div>
@@ -533,7 +599,7 @@ export default function App() {
   return (
     <div className={`min-h-screen w-full flex flex-col items-center justify-between p-2 md:p-4 overflow-hidden relative bg-gradient-to-br ${themeGradient} text-white transition-colors duration-1000`}>
       
-      {/* Indicador de Color y Turno (Top Bar) */}
+      {/* Indicador de Color y Turno */}
       <div className="w-full max-w-6xl flex justify-between items-center bg-black/30 p-2 rounded-xl backdrop-blur-sm border border-white/10 z-10">
         <button onClick={() => setGameState('MENU')} className="p-2 hover:bg-white/10 rounded-lg text-xs md:text-sm">⬅ Salir</button>
         <div className="flex items-center gap-4">
@@ -550,7 +616,7 @@ export default function App() {
         <div className="text-xs md:text-sm">Ronda: {direction === 1 ? '↻' : '↺'}</div>
       </div>
 
-      {/* Área de Bots (Top) */}
+      {/* Área de Bots */}
       <div className="flex justify-center gap-4 md:gap-12 w-full mt-4">
         {players.filter(p => p.isBot).map((bot, idx) => (
           <div key={bot.id} className={`flex flex-col items-center transition-opacity ${turnIndex === bot.id ? 'opacity-100 scale-110' : 'opacity-60 scale-90'}`}>
@@ -568,9 +634,8 @@ export default function App() {
         ))}
       </div>
 
-      {/* Mesa Central (Mazo y Descarte) */}
+      {/* Mesa Central */}
       <div className={`relative flex items-center justify-center gap-8 md:gap-16 my-4 md:my-8 ${animationClass}`}>
-        {/* Mazo de Robo */}
         <div onClick={handleHumanDraw} className="relative group cursor-pointer hover:scale-105 transition-transform">
            <Card card={{color: 'black', type: 'back'}} hidden={true} />
            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -578,7 +643,6 @@ export default function App() {
            </div>
         </div>
 
-        {/* Pila de Descarte */}
         <div className="relative">
            {discardPile.slice(-3).map((c, i) => (
              <div key={c.id} className="absolute top-0 left-0" style={{ transform: `rotate(${(i-1)*5}deg) translate(${i*2}px, ${i*2}px)` }}>
@@ -589,14 +653,12 @@ export default function App() {
              <Card card={topCard} />
            </div>
            
-           {/* Efecto visual del sentido */}
            <div className={`absolute -inset-10 border-2 border-dashed border-white/20 rounded-full animate-spin-slow pointer-events-none ${direction === -1 ? 'animate-reverse-spin' : ''}`}></div>
         </div>
       </div>
 
-      {/* Mano del Jugador (Bottom) */}
+      {/* Mano del Jugador */}
       <div className="w-full flex flex-col items-center z-20 pb-4">
-        {/* Controles del Jugador */}
         <div className="flex gap-4 mb-4">
           <button 
             onClick={() => !unoCalled && players[0].hand.length <= 2 && setUnoCalled(true)}
@@ -615,10 +677,8 @@ export default function App() {
           )}
         </div>
 
-        {/* Cartas */}
         <div className="flex flex-wrap justify-center items-end gap-[-20px] px-2 max-w-full overflow-x-auto pb-4 no-scrollbar" style={{minHeight: '160px'}}>
            {players[0].hand.map((card, idx) => {
-             // Validar si es jugable para highlight
              const isPlayable = isPlayerTurn && (card.color === currentColor || card.color === 'black' || card.value === topCard.value);
              return (
                <div key={card.id} style={{ marginLeft: idx === 0 ? 0 : '-30px', zIndex: idx, transform: isPlayable ? 'translateY(-10px)' : 'none' }} className="transition-transform hover:z-50 hover:-translate-y-8">
@@ -629,7 +689,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* MODAL: Selector de Color */}
       {showColorPicker && (
         <div className="absolute inset-0 bg-black/80 z-50 flex items-center justify-center animate-in fade-in">
           <div className="bg-gray-800 p-8 rounded-2xl border border-white/20 text-center shadow-2xl">
@@ -647,7 +706,6 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL: Game Over */}
       {gameState === 'GAME_OVER' && (
         <div className="absolute inset-0 bg-black/90 z-50 flex flex-col items-center justify-center animate-in zoom-in duration-500">
            {winner === 0 ? (
@@ -669,7 +727,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Styles for animations */}
       <style>{`
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }

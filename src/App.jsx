@@ -65,10 +65,12 @@ const generateDeck = (mode) => {
 
 // --- COMPONENTES VISUALES ---
 
-const Card = ({ card, onClick, isPlayable, hidden, small = false }) => {
+const Card = ({ card, onClick, isPlayable, hidden, small = false, style = {} }) => {
   if (hidden) {
     return (
-      <div className={`
+      <div 
+        style={style}
+        className={`
         relative rounded-xl border-2 border-white/20 shadow-xl 
         bg-gradient-to-br from-gray-800 to-black
         flex items-center justify-center select-none transition-all duration-300
@@ -96,11 +98,12 @@ const Card = ({ card, onClick, isPlayable, hidden, small = false }) => {
   return (
     <div 
       onClick={isPlayable ? onClick : undefined}
+      style={style}
       className={`
         relative rounded-xl border-4 border-white select-none transition-all duration-200
         bg-gradient-to-br ${getBaseColor(card.color)}
         flex items-center justify-center shadow-lg
-        ${small ? 'w-12 h-16 text-xl' : 'w-20 h-32 md:w-28 md:h-44 hover:-translate-y-4 hover:scale-110 cursor-pointer'}
+        ${style.position === 'fixed' ? '' : (small ? 'w-12 h-16 text-xl' : 'w-20 h-32 md:w-28 md:h-44 hover:-translate-y-4 hover:scale-110 cursor-pointer')}
         ${isPlayable ? 'ring-4 ring-white/50 animate-pulse' : 'opacity-100'}
         ${card.type === TYPES.MINUS4 ? 'animate-bounce border-red-500' : ''}
       `}
@@ -132,7 +135,7 @@ const Card = ({ card, onClick, isPlayable, hidden, small = false }) => {
 
 export default function App() {
   const [mode, setMode] = useState(null); 
-  const [gameState, setGameState] = useState('MENU'); // 'MENU', 'PLAYING', 'GAME_OVER', 'HOW_TO_PLAY'
+  const [gameState, setGameState] = useState('MENU'); 
   const [deck, setDeck] = useState([]);
   const [discardPile, setDiscardPile] = useState([]);
   const [players, setPlayers] = useState([]); 
@@ -146,10 +149,62 @@ export default function App() {
   const [pendingCard, setPendingCard] = useState(null); 
   const [message, setMessage] = useState("¡Bienvenido!");
   const [animationClass, setAnimationClass] = useState("");
+  
+  const [flyingCard, setFlyingCard] = useState(null); 
+  const [isAnimating, setIsAnimating] = useState(false);
+  
+  // Ref para prevenir condiciones de carrera en la lógica del juego (doble jugada)
+  const isProcessingRef = useRef(false);
 
-  const playAreaRef = useRef(null);
+  const discardRef = useRef(null);
+  const botRefs = useRef({});
 
-  // Función pura para ejecutar robos (sin side effects directos, devuelve nuevo estado)
+  const triggerCardAnimation = (card, startRect, onComplete) => {
+    if (!discardRef.current) {
+        onComplete();
+        return;
+    }
+    
+    setIsAnimating(true);
+    const discardRect = discardRef.current.getBoundingClientRect();
+
+    setFlyingCard({
+        card,
+        style: {
+            position: 'fixed',
+            top: startRect.top,
+            left: startRect.left,
+            width: startRect.width,
+            height: startRect.height,
+            zIndex: 100,
+            transition: 'all 0s',
+            transform: 'scale(1)'
+        }
+    });
+
+    setTimeout(() => {
+        setFlyingCard({
+            card,
+            style: {
+                position: 'fixed',
+                top: discardRect.top,
+                left: discardRect.left,
+                width: discardRect.width,
+                height: discardRect.height,
+                zIndex: 100,
+                transition: 'all 0.6s cubic-bezier(0.25, 1, 0.5, 1)',
+                transform: 'scale(1.05) rotate(360deg)'
+            }
+        });
+    }, 20);
+
+    setTimeout(() => {
+        setFlyingCard(null);
+        setIsAnimating(false);
+        onComplete();
+    }, 600); 
+  };
+
   const performDraw = (currentDeck, currentDiscard, currentPlayers, playerIdx, count) => {
     let newDeck = [...currentDeck];
     let newDiscard = [...currentDiscard];
@@ -164,7 +219,7 @@ export default function App() {
                 newDeck = newDiscard.sort(() => Math.random() - 0.5);
                 newDiscard = [topCard];
             } else {
-                break; // No hay más cartas
+                break; 
             }
         }
         if(newDeck.length > 0) {
@@ -174,12 +229,7 @@ export default function App() {
 
     newPlayers[playerIdx].hand.push(...drawn);
     
-    return {
-        newDeck,
-        newDiscard,
-        newPlayers,
-        drawn
-    };
+    return { newDeck, newDiscard, newPlayers, drawn };
   };
 
   const startGame = (selectedMode) => {
@@ -212,21 +262,23 @@ export default function App() {
     setMode(selectedMode);
     setWinner(null);
     setUnoCalled(false);
+    setFlyingCard(null);
+    setIsAnimating(false);
+    isProcessingRef.current = false; // Resetear semáforo
     setMessage(`¡Comienza el juego! Modo: ${selectedMode}`);
     setGameState('PLAYING');
   };
 
   // Turno de la IA
   useEffect(() => {
-    if (gameState === 'PLAYING' && players[turnIndex]?.isBot && !winner && !showColorPicker) {
+    if (gameState === 'PLAYING' && players[turnIndex]?.isBot && !winner && !showColorPicker && !isAnimating && !isProcessingRef.current) {
       const timer = setTimeout(() => {
         botPlay();
-      }, mode === 'IMPOSSIBLE' ? 1000 : 1500); 
+      }, mode === 'IMPOSSIBLE' ? 800 : 1200); 
       return () => clearTimeout(timer);
     }
-  }, [turnCount, gameState, winner, showColorPicker, players, turnIndex, discardPile]);
+  }, [turnCount, gameState, winner, showColorPicker, players, turnIndex, discardPile, isAnimating]);
 
-  // Wrapper para robos simples (Botón Robar / Penalizaciones simples)
   const drawCards = (playerIdx, count) => {
     const { newDeck, newDiscard, newPlayers } = performDraw(deck, discardPile, players, playerIdx, count);
     setDeck(newDeck);
@@ -243,6 +295,9 @@ export default function App() {
   };
 
   const botPlay = () => {
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true; // Bloquear
+
     const bot = players[turnIndex];
     const topCard = discardPile[discardPile.length - 1];
     
@@ -272,6 +327,7 @@ export default function App() {
       chosenColor = ['red', 'blue', 'green', 'yellow'][Math.floor(Math.random() * 4)];
     }
 
+    // UNO Logic
     if (bot.hand.length === 2 && chosenCard) {
       const forgets = mode !== 'IMPOSSIBLE' && Math.random() < 0.1;
       if (!forgets) {
@@ -280,29 +336,48 @@ export default function App() {
         setTimeout(() => {
             setMessage(`${bot.name} olvidó decir UNO. +3 Cartas.`);
             drawCards(turnIndex, 3);
-        }, 500);
+        }, 300);
       }
     }
 
     if (chosenCard) {
-      handleMove(bot.id, chosenCard, chosenColor);
+      const botNode = botRefs.current[bot.id];
+      const startRect = botNode 
+        ? botNode.getBoundingClientRect() 
+        : { top: 0, left: 0, width: 0, height: 0 };
+      
+      triggerCardAnimation(chosenCard, startRect, () => {
+         handleMove(bot.id, chosenCard, chosenColor);
+         isProcessingRef.current = false; // Liberar
+      });
+
     } else {
       setMessage(`${bot.name} roba una carta.`);
       const drawn = drawCards(turnIndex, 1);
       
       const card = drawn[0];
       if (card && (card.color === currentColor || card.color === 'black' || card.value === topCard.value)) {
-        setTimeout(() => handleMove(bot.id, card, chosenColor), 1000); 
+         setTimeout(() => {
+             const botNode = botRefs.current[bot.id];
+             const startRect = botNode 
+                ? botNode.getBoundingClientRect() 
+                : { top: 0, left: 0, width: 0, height: 0 };
+             triggerCardAnimation(card, startRect, () => {
+                handleMove(bot.id, card, chosenColor);
+                isProcessingRef.current = false; // Liberar
+             });
+         }, 800);
       } else {
         setTurnIndex(getNextPlayerIndex());
         setTurnCount(c => c + 1); 
+        isProcessingRef.current = false; // Liberar
       }
     }
   };
 
-  const handleHumanPlay = (card) => {
-    if (gameState !== 'PLAYING' || players[turnIndex].isBot) return;
-
+  const handleHumanPlay = (card, event) => {
+    if (gameState !== 'PLAYING' || players[turnIndex].isBot || isAnimating || isProcessingRef.current) return;
+    
     const topCard = discardPile[discardPile.length - 1];
     const isMatch = card.color === currentColor || card.color === 'black' || card.value === topCard.value;
 
@@ -313,22 +388,37 @@ export default function App() {
       return;
     }
 
+    isProcessingRef.current = true; // Bloquear
+    const rect = event.currentTarget.getBoundingClientRect();
+
     if (card.color === 'black') {
-      setPendingCard(card);
+      setPendingCard({ card, rect }); 
       setShowColorPicker(true);
+      // isProcessingRef.current se mantiene true hasta que elija color
     } else {
-      handleMove(0, card);
+      triggerCardAnimation(card, rect, () => {
+        handleMove(0, card);
+        isProcessingRef.current = false; // Liberar
+      });
     }
   };
 
   const handleColorPick = (color) => {
     setShowColorPicker(false);
-    handleMove(0, pendingCard, color);
-    setPendingCard(null);
+    if (pendingCard) {
+        triggerCardAnimation(pendingCard.card, pendingCard.rect, () => {
+            handleMove(0, pendingCard.card, color);
+            setPendingCard(null);
+            isProcessingRef.current = false; // Liberar al terminar todo
+        });
+    } else {
+        isProcessingRef.current = false;
+    }
   };
 
   const handleHumanDraw = () => {
-    if (players[turnIndex].isBot) return;
+    if (players[turnIndex].isBot || isAnimating || isProcessingRef.current) return;
+    isProcessingRef.current = true;
     drawCards(0, 1);
     setUnoCalled(false); 
     
@@ -336,17 +426,16 @@ export default function App() {
     setTimeout(() => {
         setTurnIndex(getNextPlayerIndex());
         setTurnCount(c => c + 1);
+        isProcessingRef.current = false;
     }, 800);
   };
 
-  // --- LÓGICA CENTRAL DE MOVIMIENTO ---
   const handleMove = (playerId, card, chosenWildColor = null) => {
     let tempDeck = [...deck];
     let tempDiscard = [...discardPile];
     let tempPlayers = players.map(p => ({...p, hand: [...p.hand]}));
     let currentPlayer = tempPlayers[playerId];
 
-    // VERIFICACIÓN DE PENALIZACIÓN POR NO DECIR UNO
     if (playerId === 0 && currentPlayer.hand.length === 2 && !unoCalled) {
         setMessage("¡No dijiste UNO! Penalización +3 cartas.");
         const resPenalty = performDraw(tempDeck, tempDiscard, tempPlayers, playerId, 3);
@@ -387,11 +476,7 @@ export default function App() {
     let skip = false;
 
     if (card.color === 'black') {
-       if (chosenWildColor) {
-         setCurrentColor(chosenWildColor);
-       } else {
-         setCurrentColor('red'); 
-       }
+       setCurrentColor(chosenWildColor || 'red');
     } else {
        setCurrentColor(card.color);
     }
@@ -474,8 +559,6 @@ export default function App() {
     setUnoCalled(false);
   };
 
-  // --- VISTAS ---
-
   if (gameState === 'HOW_TO_PLAY') {
       return (
           <div className="min-h-screen bg-slate-900 flex flex-col items-center p-4 md:p-8 text-white overflow-auto relative">
@@ -487,23 +570,18 @@ export default function App() {
                    >
                        <ArrowLeft /> Volver al Menú
                    </button>
-
-                   <h1 className="text-4xl md:text-5xl font-black mb-8 text-center text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-pink-500">
-                       ¿Cómo jugar?
-                   </h1>
-
+                   <h1 className="text-4xl md:text-5xl font-black mb-8 text-center text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-pink-500">¿Cómo jugar?</h1>
                    <div className="space-y-8 bg-black/40 p-6 md:p-8 rounded-2xl border border-white/10 backdrop-blur-md">
-                       
                        <section>
                            <h2 className="text-2xl font-bold text-yellow-400 mb-4 border-b border-yellow-400/30 pb-2">Mecánicas básicas</h2>
                            <ul className="space-y-3 text-gray-200">
-                               <li>• Juega cartas que <strong>coincidan en color, número o símbolo</strong> con la carta superior del montón de descarte. Si no puedes jugar, <strong>roba del montón de robo</strong> hasta encontrar una que puedas usar.</li>
+                               <li>• Juega cartas que <strong>coincidan en color, número o símbolo</strong> con la carta superior del montón de descarte.</li>
                                <li>• <strong>Objetivo:</strong> Sé el primero en descartar todas tus cartas.</li>
                                <li>• <strong>Turnos:</strong> Se juegan en orden (horario o anti-horario).</li>
                                <li>• <strong>¡UNO!:</strong> Cuando te quedan 2 cartas, presiona el botón UNO o recibirás penalidad (+3 cartas).</li>
                            </ul>
                        </section>
-
+                       {/* Resto de la sección omitida por brevedad, pero mantenida en código */}
                        <section>
                            <h3 className="text-xl font-bold text-blue-400 mb-3">Cartas especiales:</h3>
                            <ul className="grid gap-3 text-sm md:text-base">
@@ -514,7 +592,6 @@ export default function App() {
                                <li className="flex items-start gap-2"><span className="font-bold text-yellow-400">+4</span> <span>El siguiente roba <strong>4 cartas</strong>, pierde turno y tú eliges color.</span></li>
                            </ul>
                        </section>
-
                        <section>
                            <h2 className="text-2xl font-bold text-pink-500 mb-4 border-b border-pink-500/30 pb-2">Modos de juego</h2>
                            <div className="space-y-4">
@@ -538,7 +615,6 @@ export default function App() {
                                </div>
                            </div>
                        </section>
-
                        <section>
                            <h2 className="text-2xl font-bold text-green-400 mb-4 border-b border-green-400/30 pb-2">Controles rápidos</h2>
                            <ul className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-300">
@@ -580,7 +656,6 @@ export default function App() {
               <div className="flex items-center justify-center gap-2 text-red-100"><Flame /> MODO IMPOSIBLE <Skull /></div>
               <p className="text-xs text-red-300 mt-1 font-normal">+10 Cards, +6 Draws, IA Agresiva</p>
             </button>
-            
             <button onClick={() => setGameState('HOW_TO_PLAY')} className="mt-4 px-6 py-2 bg-slate-700/50 hover:bg-slate-600 rounded-xl text-sm font-semibold transition-colors flex items-center justify-center gap-2 mx-auto">
                 <BookOpen size={16}/> ¿Cómo jugar?
             </button>
@@ -599,6 +674,13 @@ export default function App() {
   return (
     <div className={`min-h-screen w-full flex flex-col items-center justify-between p-2 md:p-4 overflow-hidden relative bg-gradient-to-br ${themeGradient} text-white transition-colors duration-1000`}>
       
+      {/* Carta Voladora (Animación) */}
+      {flyingCard && (
+         <div style={flyingCard.style} className="pointer-events-none shadow-2xl">
+             <Card card={flyingCard.card} />
+         </div>
+      )}
+
       {/* Indicador de Color y Turno */}
       <div className="w-full max-w-6xl flex justify-between items-center bg-black/30 p-2 rounded-xl backdrop-blur-sm border border-white/10 z-10">
         <button onClick={() => setGameState('MENU')} className="p-2 hover:bg-white/10 rounded-lg text-xs md:text-sm">⬅ Salir</button>
@@ -619,7 +701,11 @@ export default function App() {
       {/* Área de Bots */}
       <div className="flex justify-center gap-4 md:gap-12 w-full mt-4">
         {players.filter(p => p.isBot).map((bot, idx) => (
-          <div key={bot.id} className={`flex flex-col items-center transition-opacity ${turnIndex === bot.id ? 'opacity-100 scale-110' : 'opacity-60 scale-90'}`}>
+          <div 
+             key={bot.id} 
+             ref={el => botRefs.current[bot.id] = el}
+             className={`flex flex-col items-center transition-opacity ${turnIndex === bot.id ? 'opacity-100 scale-110' : 'opacity-60 scale-90'}`}
+          >
             <div className="relative">
               <div className="w-16 h-24 bg-gradient-to-t from-gray-800 to-gray-600 rounded-lg border-2 border-white/30 shadow-xl flex items-center justify-center">
                  <span className="text-2xl">🃏</span>
@@ -643,9 +729,9 @@ export default function App() {
            </div>
         </div>
 
-        <div className="relative">
+        <div className="relative" ref={discardRef}>
            {discardPile.slice(-3).map((c, i) => (
-             <div key={c.id} className="absolute top-0 left-0" style={{ transform: `rotate(${(i-1)*5}deg) translate(${i*2}px, ${i*2}px)` }}>
+             <div key={`${c.id}-${i}`} className="absolute top-0 left-0" style={{ transform: `rotate(${(i-1)*5}deg) translate(${i*2}px, ${i*2}px)` }}>
                {i < 2 && <Card card={c} />}
              </div>
            ))}
@@ -682,7 +768,7 @@ export default function App() {
              const isPlayable = isPlayerTurn && (card.color === currentColor || card.color === 'black' || card.value === topCard.value);
              return (
                <div key={card.id} style={{ marginLeft: idx === 0 ? 0 : '-30px', zIndex: idx, transform: isPlayable ? 'translateY(-10px)' : 'none' }} className="transition-transform hover:z-50 hover:-translate-y-8">
-                  <Card card={card} isPlayable={isPlayable} onClick={() => handleHumanPlay(card)} />
+                  <Card card={card} isPlayable={isPlayable} onClick={(e) => handleHumanPlay(card, e)} />
                </div>
              );
            })}
@@ -706,6 +792,7 @@ export default function App() {
         </div>
       )}
 
+      {/* Pantalla de Fin de Juego */}
       {gameState === 'GAME_OVER' && (
         <div className="absolute inset-0 bg-black/90 z-50 flex flex-col items-center justify-center animate-in zoom-in duration-500">
            {winner === 0 ? (

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Users, Skull, RefreshCw, Trophy, Zap, Flame, ShieldAlert, AlertTriangle, BookOpen, ArrowLeft } from 'lucide-react';
+import { Play, Users, Skull, RefreshCw, Trophy, Zap, Flame, ShieldAlert, AlertTriangle, BookOpen, ArrowLeft, MessageCircle, X } from 'lucide-react';
 
 // --- CONFIGURACIÓN Y UTILIDADES ---
 
@@ -19,6 +19,9 @@ const TYPES = {
   WILD10: 'wild10', // Comodín +10
   MINUS4: 'minus4'  // Elimina 4 cartas propias
 };
+
+// Lista de Emojis disponibles para el jugador
+const PLAYER_EMOJIS = ['😭', '😡', '🤣', '❗', '🤔', '😎', '😱'];
 
 // Generador de ID Único Robustecido
 let globalIdCounter = 0;
@@ -153,11 +156,28 @@ export default function App() {
   const [flyingCard, setFlyingCard] = useState(null); 
   const [isAnimating, setIsAnimating] = useState(false);
   
+  // Estados para Emojis
+  const [activeEmojis, setActiveEmojis] = useState({}); // { [playerId]: 'emoji' }
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+
   // Ref para prevenir condiciones de carrera en la lógica del juego (doble jugada)
   const isProcessingRef = useRef(false);
 
   const discardRef = useRef(null);
   const botRefs = useRef({});
+
+  // Helper para mostrar emoji
+  const triggerEmoji = (playerId, emoji) => {
+    setActiveEmojis(prev => ({ ...prev, [playerId]: emoji }));
+    // Auto ocultar después de 3 segundos
+    setTimeout(() => {
+      setActiveEmojis(prev => {
+        const newState = { ...prev };
+        delete newState[playerId];
+        return newState;
+      });
+    }, 3000);
+  };
 
   const triggerCardAnimation = (card, startRect, onComplete) => {
     if (!discardRef.current) {
@@ -264,7 +284,8 @@ export default function App() {
     setUnoCalled(false);
     setFlyingCard(null);
     setIsAnimating(false);
-    isProcessingRef.current = false; // Resetear semáforo
+    setActiveEmojis({});
+    isProcessingRef.current = false; 
     setMessage(`¡Comienza el juego! Modo: ${selectedMode}`);
     setGameState('PLAYING');
   };
@@ -296,7 +317,7 @@ export default function App() {
 
   const botPlay = () => {
     if (isProcessingRef.current) return;
-    isProcessingRef.current = true; // Bloquear
+    isProcessingRef.current = true;
 
     const bot = players[turnIndex];
     const topCard = discardPile[discardPile.length - 1];
@@ -348,29 +369,36 @@ export default function App() {
       
       triggerCardAnimation(chosenCard, startRect, () => {
          handleMove(bot.id, chosenCard, chosenColor);
-         isProcessingRef.current = false; // Liberar
+         isProcessingRef.current = false;
       });
 
     } else {
-      setMessage(`${bot.name} roba una carta.`);
-      const drawn = drawCards(turnIndex, 1);
-      
+      // Simulación pura (no afecta estado visual aún)
+      const { drawn } = performDraw(deck, discardPile, players, turnIndex, 1);
       const card = drawn[0];
+      
       if (card && (card.color === currentColor || card.color === 'black' || card.value === topCard.value)) {
+         setMessage(`${bot.name} roba y juega...`);
          setTimeout(() => {
              const botNode = botRefs.current[bot.id];
              const startRect = botNode 
                 ? botNode.getBoundingClientRect() 
                 : { top: 0, left: 0, width: 0, height: 0 };
+             
              triggerCardAnimation(card, startRect, () => {
-                handleMove(bot.id, card, chosenColor);
-                isProcessingRef.current = false; // Liberar
+                handleMove(bot.id, card, chosenColor, true);
+                isProcessingRef.current = false;
              });
          }, 800);
       } else {
-        setTurnIndex(getNextPlayerIndex());
-        setTurnCount(c => c + 1); 
-        isProcessingRef.current = false; // Liberar
+        // Si no sirve, entonces sí ejecutamos el robo normal y pasamos turno
+        setMessage(`${bot.name} roba una carta.`);
+        drawCards(turnIndex, 1);
+        setTimeout(() => {
+            setTurnIndex(getNextPlayerIndex());
+            setTurnCount(c => c + 1); 
+            isProcessingRef.current = false;
+        }, 500);
       }
     }
   };
@@ -388,17 +416,16 @@ export default function App() {
       return;
     }
 
-    isProcessingRef.current = true; // Bloquear
+    isProcessingRef.current = true;
     const rect = event.currentTarget.getBoundingClientRect();
 
     if (card.color === 'black') {
       setPendingCard({ card, rect }); 
       setShowColorPicker(true);
-      // isProcessingRef.current se mantiene true hasta que elija color
     } else {
       triggerCardAnimation(card, rect, () => {
         handleMove(0, card);
-        isProcessingRef.current = false; // Liberar
+        isProcessingRef.current = false;
       });
     }
   };
@@ -409,7 +436,7 @@ export default function App() {
         triggerCardAnimation(pendingCard.card, pendingCard.rect, () => {
             handleMove(0, pendingCard.card, color);
             setPendingCard(null);
-            isProcessingRef.current = false; // Liberar al terminar todo
+            isProcessingRef.current = false;
         });
     } else {
         isProcessingRef.current = false;
@@ -430,21 +457,34 @@ export default function App() {
     }, 800);
   };
 
-  const handleMove = (playerId, card, chosenWildColor = null) => {
+  // --- LÓGICA CENTRAL DE MOVIMIENTO ---
+  const handleMove = (playerId, card, chosenWildColor = null, fromDeck = false) => {
     let tempDeck = [...deck];
     let tempDiscard = [...discardPile];
     let tempPlayers = players.map(p => ({...p, hand: [...p.hand]}));
+    
+    if (fromDeck) {
+        const res = performDraw(tempDeck, tempDiscard, tempPlayers, playerId, 1);
+        tempDeck = res.newDeck;
+        tempDiscard = res.newDiscard;
+        tempPlayers = res.newPlayers;
+        card = res.drawn[0];
+    }
+
     let currentPlayer = tempPlayers[playerId];
 
+    // Penalización UNO
     if (playerId === 0 && currentPlayer.hand.length === 2 && !unoCalled) {
-        setMessage("¡No dijiste UNO! Penalización +3 cartas.");
-        const resPenalty = performDraw(tempDeck, tempDiscard, tempPlayers, playerId, 3);
+        const penaltyCount = mode === 'IMPOSSIBLE' ? 6 : 3; 
+        setMessage(`¡No dijiste UNO! Penalización +${penaltyCount} cartas.`);
+        const resPenalty = performDraw(tempDeck, tempDiscard, tempPlayers, playerId, penaltyCount);
         tempDeck = resPenalty.newDeck;
         tempDiscard = resPenalty.newDiscard;
         tempPlayers = resPenalty.newPlayers;
         currentPlayer = tempPlayers[playerId];
     }
     
+    // Eliminar carta de la mano
     const cardIndex = currentPlayer.hand.findIndex(c => c.id === card.id);
     if (cardIndex !== -1) {
         currentPlayer.hand.splice(cardIndex, 1);
@@ -462,6 +502,11 @@ export default function App() {
     }
 
     tempDiscard.push(card);
+
+    // Emoji de Bot: Menos de 3 cartas
+    if (currentPlayer.isBot && currentPlayer.hand.length < 3 && currentPlayer.hand.length > 0) {
+        triggerEmoji(playerId, '❗');
+    }
 
     if (currentPlayer.hand.length === 0) {
       setWinner(playerId);
@@ -492,6 +537,7 @@ export default function App() {
         return (next + tempPlayers.length) % tempPlayers.length;
     };
 
+    // Aplicar efectos y Emojis de Bots
     switch (card.type) {
       case TYPES.SKIP:
         skip = true;
@@ -513,6 +559,10 @@ export default function App() {
         tempPlayers = resDraw2.newPlayers;
         skip = true; 
         setMessage(`${tempPlayers[nextIndex].name} come +2 y pierde turno.`);
+        
+        // Emojis
+        if (tempPlayers[nextIndex].isBot) triggerEmoji(nextIndex, '😡');
+        if (currentPlayer.isBot && Math.random() > 0.5) triggerEmoji(playerId, '🤣');
         break;
       case TYPES.DRAW6: 
         nextIndex = getVictimIndex(false);
@@ -522,6 +572,10 @@ export default function App() {
         tempPlayers = resDraw6.newPlayers;
         skip = true;
         setMessage(`¡${tempPlayers[nextIndex].name} SUFRE +6 y pierde turno!`);
+        
+        // Emojis
+        if (tempPlayers[nextIndex].isBot) triggerEmoji(nextIndex, '😡');
+        if (currentPlayer.isBot && Math.random() > 0.5) triggerEmoji(playerId, '🤣');
         break;
       case TYPES.WILD4:
         nextIndex = getVictimIndex(false);
@@ -531,6 +585,10 @@ export default function App() {
         tempPlayers = resDraw4.newPlayers;
         skip = true;
         setMessage(`${tempPlayers[nextIndex].name} come +4 y pierde turno.`);
+        
+        // Emojis
+        if (tempPlayers[nextIndex].isBot) triggerEmoji(nextIndex, '😡');
+        if (currentPlayer.isBot && Math.random() > 0.5) triggerEmoji(playerId, '🤣');
         break;
       case TYPES.WILD10: 
         nextIndex = getVictimIndex(false);
@@ -540,6 +598,10 @@ export default function App() {
         tempPlayers = resDraw10.newPlayers;
         skip = true;
         setMessage(`💀 ¡${tempPlayers[nextIndex].name} DESTRUIDO CON +10! 💀`);
+        
+        // Emojis
+        if (tempPlayers[nextIndex].isBot) triggerEmoji(nextIndex, '😡');
+        if (currentPlayer.isBot && Math.random() > 0.5) triggerEmoji(playerId, '🤣');
         break;
       case TYPES.MINUS4:
          break;
@@ -581,7 +643,6 @@ export default function App() {
                                <li>• <strong>¡UNO!:</strong> Cuando te quedan 2 cartas, presiona el botón UNO o recibirás penalidad (+3 cartas).</li>
                            </ul>
                        </section>
-                       {/* Resto de la sección omitida por brevedad, pero mantenida en código */}
                        <section>
                            <h3 className="text-xl font-bold text-blue-400 mb-3">Cartas especiales:</h3>
                            <ul className="grid gap-3 text-sm md:text-base">
@@ -704,8 +765,16 @@ export default function App() {
           <div 
              key={bot.id} 
              ref={el => botRefs.current[bot.id] = el}
-             className={`flex flex-col items-center transition-opacity ${turnIndex === bot.id ? 'opacity-100 scale-110' : 'opacity-60 scale-90'}`}
+             className={`relative flex flex-col items-center transition-opacity z-20 ${turnIndex === bot.id ? 'opacity-100 scale-110' : 'opacity-60 scale-90'}`}
           >
+            {/* Globo de Emoji del Bot */}
+            {activeEmojis[bot.id] && (
+                <div className="absolute -top-12 left-1/2 -translate-x-1/2 bg-white text-black text-3xl p-2 rounded-full shadow-lg border-2 border-black animate-bounce z-50 whitespace-nowrap">
+                    {activeEmojis[bot.id]}
+                    <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 w-3 h-3 bg-white border-r-2 border-b-2 border-black rotate-45"></div>
+                </div>
+            )}
+
             <div className="relative">
               <div className="w-16 h-24 bg-gradient-to-t from-gray-800 to-gray-600 rounded-lg border-2 border-white/30 shadow-xl flex items-center justify-center">
                  <span className="text-2xl">🃏</span>
@@ -744,8 +813,46 @@ export default function App() {
       </div>
 
       {/* Mano del Jugador */}
-      <div className="w-full flex flex-col items-center z-20 pb-4">
-        <div className="flex gap-4 mb-4">
+      <div className="w-full flex flex-col items-center z-20 pb-4 relative">
+        
+        {/* Globo de Emoji del Jugador */}
+        {activeEmojis[0] && (
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-full bg-white text-black text-4xl p-3 rounded-full shadow-lg border-2 border-black animate-bounce z-50 mb-4">
+                {activeEmojis[0]}
+                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 w-4 h-4 bg-white border-r-2 border-b-2 border-black rotate-45"></div>
+            </div>
+        )}
+
+        <div className="flex gap-4 mb-4 items-end">
+          <div className="relative">
+              {showEmojiPicker && (
+                  <div className="absolute bottom-full mb-2 left-0 bg-gray-800 p-2 rounded-xl shadow-xl border border-white/20 grid grid-cols-4 gap-2 animate-in fade-in slide-in-from-bottom-4 w-64 z-50">
+                      <div className="col-span-4 flex justify-between items-center border-b border-white/10 pb-1 mb-1">
+                          <span className="text-xs text-gray-400 uppercase font-bold">Reacciones</span>
+                          <button onClick={() => setShowEmojiPicker(false)}><X size={14} className="text-gray-400 hover:text-white"/></button>
+                      </div>
+                      {PLAYER_EMOJIS.map(emoji => (
+                          <button 
+                            key={emoji} 
+                            onClick={() => {
+                                triggerEmoji(0, emoji);
+                                setShowEmojiPicker(false);
+                            }}
+                            className="text-2xl hover:bg-white/10 p-2 rounded transition-colors"
+                          >
+                              {emoji}
+                          </button>
+                      ))}
+                  </div>
+              )}
+              <button 
+                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                className="p-3 bg-white/10 hover:bg-white/20 rounded-full backdrop-blur-sm border border-white/20 transition-all active:scale-95"
+              >
+                <MessageCircle size={24} />
+              </button>
+          </div>
+
           <button 
             onClick={() => !unoCalled && players[0].hand.length <= 2 && setUnoCalled(true)}
             className={`
@@ -757,7 +864,7 @@ export default function App() {
           </button>
           
           {turnIndex === 0 && (
-             <div className="text-yellow-300 font-bold animate-pulse flex items-center gap-2">
+             <div className="text-yellow-300 font-bold animate-pulse flex items-center gap-2 mb-2">
                <AlertTriangle size={20} /> TU TURNO
              </div>
           )}
